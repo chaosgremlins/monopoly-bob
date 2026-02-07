@@ -1,0 +1,16 @@
+{
+  "name": "monopoly-eval",
+  "version": "1.0.0",
+  "description": "Terminal-based Monopoly simulation where LLMs play via tool calls",
+  "scripts": {
+    "start": "bun src/index.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "chalk": "^5.4.1"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.2"
+  }
+}
