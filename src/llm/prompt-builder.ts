@@ -25,7 +25,61 @@ Strategy tips:
 - Railroads provide steady income early game.
 - Building to 3 houses is the most cost-effective development level.
 - Keep cash reserves for rent payments.
-- Mortgage low-value properties before high-value ones.`;
+- Mortgage low-value properties before high-value ones.
+- IMPORTANT: When you have a monopoly, build houses! It dramatically increases rent.
+
+${buildBoardReference()}`;
+}
+
+function buildBoardReference(): string {
+  const lines: string[] = ['BOARD REFERENCE (all 40 spaces):'];
+  lines.push('');
+
+  const groups: Record<string, string[]> = {};
+
+  for (const space of BOARD_SPACES) {
+    if (space.type === 'property') {
+      const group = space.colorGroup;
+      if (!groups[group]) groups[group] = [];
+      groups[group].push(
+        `  Pos ${space.position}: ${space.name} — $${space.price}, house $${space.houseCost}, rent [${space.rent.join(', ')}]`
+      );
+    }
+  }
+
+  for (const [group, props] of Object.entries(groups)) {
+    lines.push(`${group.toUpperCase()} GROUP:`);
+    for (const p of props) lines.push(p);
+    lines.push('');
+  }
+
+  lines.push('RAILROADS ($200 each, rent: $25/$50/$100/$200 for 1/2/3/4 owned):');
+  for (const space of BOARD_SPACES) {
+    if (space.type === 'railroad') {
+      lines.push(`  Pos ${space.position}: ${space.name}`);
+    }
+  }
+  lines.push('');
+
+  lines.push('UTILITIES ($150 each, rent: 4x/10x dice roll for 1/2 owned):');
+  for (const space of BOARD_SPACES) {
+    if (space.type === 'utility') {
+      lines.push(`  Pos ${space.position}: ${space.name}`);
+    }
+  }
+  lines.push('');
+
+  lines.push('SPECIAL SPACES:');
+  lines.push('  Pos 0: Go (collect $200)');
+  lines.push('  Pos 4: Income Tax ($200)');
+  lines.push('  Pos 10: Jail / Just Visiting');
+  lines.push('  Pos 20: Free Parking');
+  lines.push('  Pos 30: Go To Jail');
+  lines.push('  Pos 38: Luxury Tax ($100)');
+  lines.push('  Chance: Pos 7, 22, 36');
+  lines.push('  Community Chest: Pos 2, 17, 33');
+
+  return lines.join('\n');
 }
 
 export function buildTurnMessage(state: GameState, actingPlayerId: string): string {

@@ -39,5 +39,10 @@ export interface LLMResponse {
   toolCalls: ToolCall[];
   textContent: string;
   rawMessage: ChatMessage; // The assistant message to add to history
-  usage?: { inputTokens: number; outputTokens: number };
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheCreationInputTokens?: number;
+    cacheReadInputTokens?: number;
+  };
 }

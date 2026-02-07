@@ -1,6 +1,14 @@
 import { GameState, GameEvent } from '../engine/types';
 import { getSpace } from '../engine/board-data';
 
+export interface UsageStats {
+  apiCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
 export interface DisplayState {
   gameState: GameState | null;
   eventLog: string[];
@@ -8,6 +16,7 @@ export interface DisplayState {
   turnNumber: number;
   gameOver: boolean;
   gameOverSummary: string[];
+  usage: UsageStats;
 }
 
 type Listener = () => void;
@@ -21,6 +30,7 @@ export class InkRenderer {
     turnNumber: 0,
     gameOver: false,
     gameOverSummary: [],
+    usage: { apiCalls: 0, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0 },
   };
 
   private listeners: Set<Listener> = new Set();
@@ -100,6 +110,11 @@ export class InkRenderer {
 
   renderBid(playerName: string, amount: number): void {
     this.pushLog(amount > 0 ? `  ${playerName} bids $${amount}` : `  ${playerName} passes`);
+    this.notify();
+  }
+
+  renderUsage(usage: UsageStats): void {
+    this.state = { ...this.state, usage };
     this.notify();
   }
 

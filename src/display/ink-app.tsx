@@ -3,6 +3,7 @@ import { Box, Text } from 'ink';
 import { Board } from './ink-board';
 import { PlayerPanel } from './ink-player-panel';
 import { EventLog } from './ink-event-log';
+import { StatsBar } from './ink-stats-bar';
 import { InkRenderer, DisplayState } from './ink-renderer';
 
 interface AppProps {
@@ -32,7 +33,10 @@ export function App({ renderer }: AppProps) {
       {/* Top: Board on left, Event Log on right */}
       <Box>
         <Board state={displayState.gameState} />
-        <EventLog events={displayState.eventLog} />
+        <Box flexDirection="column" paddingLeft={2} width={40}>
+          <StatsBar usage={displayState.usage} />
+          <EventLog events={displayState.eventLog} />
+        </Box>
       </Box>
       {/* Bottom: Players in a horizontal row */}
       <PlayerPanel

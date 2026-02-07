@@ -5,8 +5,8 @@ import { createInitialState, applyScenario } from './engine/game-state';
 import { getSpace } from './engine/board-data';
 import { getActivePlayers, getPlayerById } from './engine/bank';
 import { createRng } from './engine/dice';
-import { LLMAdapter, ChatMessage, ContentBlock, ToolDefinition } from './llm/types';
-import { translateActionsToTools } from './llm/tool-translator';
+import { LLMAdapter, ChatMessage, ContentBlock, ToolDefinition, LLMResponse } from './llm/types';
+import { STATIC_TOOLS, formatAvailableActions, translateActionsToTools } from './llm/tool-translator';
 import { buildSystemPrompt, buildTurnMessage, buildAuctionMessage } from './llm/prompt-builder';
 import { Renderer } from './display/renderer';
 import { InkRenderer } from './display/ink-renderer';
@@ -35,6 +35,7 @@ export class GameLoop {
   private logger: GameLogger;
   private config: GameConfig;
   private rng: () => number;
+  private totalUsage = { inputTokens: 0, outputTokens: 0, cacheCreation: 0, cacheRead: 0, apiCalls: 0 };
 
   constructor(config: GameConfig, adapterFactory: (playerName: string) => LLMAdapter, renderer?: AnyRenderer) {
     this.config = config;
@@ -98,6 +99,7 @@ export class GameLoop {
     }
 
     this.renderer.renderGameOver(this.state);
+    this.logUsageSummary();
     this.logger.flush(this.state);
     return this.state;
   }
@@ -212,11 +214,11 @@ export class GameLoop {
     playerId: string,
     availableActions: ReturnType<GameEngine['getAvailableActions']>,
   ): Promise<GameAction | null> {
-    const tools = translateActionsToTools(availableActions);
     const turnMessage = buildTurnMessage(this.state, playerId);
+    const actionsText = formatAvailableActions(availableActions);
 
-    // Add turn message to history
-    ctx.history.push({ role: 'user', content: turnMessage });
+    // Add turn message + available actions to history
+    ctx.history.push({ role: 'user', content: `${turnMessage}\n\n${actionsText}` });
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
@@ -224,7 +226,8 @@ export class GameLoop {
           this.state.players.find(p => p.id === playerId)!.name,
         );
 
-        const response = await ctx.adapter.chat(ctx.systemPrompt, ctx.history, tools);
+        const response = await ctx.adapter.chat(ctx.systemPrompt, ctx.history, STATIC_TOOLS);
+        this.trackUsage(response);
 
         this.renderer.renderLLMDone();
 
@@ -257,7 +260,6 @@ export class GameLoop {
         this.logError(`getLLMAction attempt ${attempt + 1}/${MAX_RETRIES}`, error, {
           playerId,
           historyLength: ctx.history.length,
-          tools: tools.map(t => t.name),
         });
         if (attempt < MAX_RETRIES - 1) {
           await sleep(1000); // Back off before retry
@@ -286,29 +288,10 @@ export class GameLoop {
 
       ctx.history.push({ role: 'user', content: auctionMessage });
 
-      const auctionTools = translateActionsToTools(
-        this.engine.getAvailableActions(this.state),
-      );
-
-      // Override tools with just the bid tool
-      const bidTool: ToolDefinition = {
-        name: 'submit_bid',
-        description: `Submit your bid for ${space.name}. Bid 0 to pass. Max bid: $${p.balance}.`,
-        input_schema: {
-          type: 'object',
-          properties: {
-            amount: {
-              type: 'number',
-              description: `Your bid amount (0 to ${p.balance})`,
-            },
-          },
-          required: ['amount'],
-        },
-      };
-
       try {
         this.renderer.renderLLMThinking(p.name);
-        const response = await ctx.adapter.chat(ctx.systemPrompt, ctx.history, [bidTool]);
+        const response = await ctx.adapter.chat(ctx.systemPrompt, ctx.history, STATIC_TOOLS);
+        this.trackUsage(response);
         this.renderer.renderLLMDone();
 
         ctx.history.push(response.rawMessage);
@@ -361,14 +344,14 @@ export class GameLoop {
     const ctx = this.players.get(targetId)!;
 
     const tradeMessage = buildTurnMessage(this.state, targetId);
-    ctx.history.push({ role: 'user', content: tradeMessage });
-
-    const tools = translateActionsToTools(this.engine.getAvailableActions(this.state));
+    const tradeActions = formatAvailableActions(this.engine.getAvailableActions(this.state));
+    ctx.history.push({ role: 'user', content: `${tradeMessage}\n\n${tradeActions}` });
 
     try {
       const target = this.state.players.find(p => p.id === targetId)!;
       this.renderer.renderLLMThinking(target.name);
-      const response = await ctx.adapter.chat(ctx.systemPrompt, ctx.history, tools);
+      const response = await ctx.adapter.chat(ctx.systemPrompt, ctx.history, STATIC_TOOLS);
+      this.trackUsage(response);
       this.renderer.renderLLMDone();
 
       ctx.history.push(response.rawMessage);
@@ -507,6 +490,45 @@ export class GameLoop {
     this.state.turnPhase = 'turn_complete';
     this.state.turnNumber++;
     this.state.lastDiceRoll = null;
+  }
+
+  private trackUsage(response: LLMResponse): void {
+    if (!response.usage) return;
+    this.totalUsage.inputTokens += response.usage.inputTokens;
+    this.totalUsage.outputTokens += response.usage.outputTokens;
+    this.totalUsage.cacheCreation += response.usage.cacheCreationInputTokens ?? 0;
+    this.totalUsage.cacheRead += response.usage.cacheReadInputTokens ?? 0;
+    this.totalUsage.apiCalls++;
+
+    if (this.renderer instanceof InkRenderer) {
+      this.renderer.renderUsage({
+        apiCalls: this.totalUsage.apiCalls,
+        inputTokens: this.totalUsage.inputTokens,
+        outputTokens: this.totalUsage.outputTokens,
+        cacheRead: this.totalUsage.cacheRead,
+        cacheWrite: this.totalUsage.cacheCreation,
+      });
+    }
+  }
+
+  private logUsageSummary(): void {
+    const u = this.totalUsage;
+    // Per Anthropic docs: input_tokens = tokens AFTER last cache breakpoint (uncached).
+    // Total = cache_read + cache_creation + input_tokens
+    const totalInput = u.cacheRead + u.cacheCreation + u.inputTokens;
+    const cachePct = totalInput > 0 ? Math.round((u.cacheRead / totalInput) * 100) : 0;
+
+    const lines = [
+      ``,
+      `── Token Usage ──`,
+      `  API calls: ${u.apiCalls}`,
+      `  Total input: ${totalInput.toLocaleString()} tokens (${cachePct}% cache hit)`,
+      `    Cache read: ${u.cacheRead.toLocaleString()} | Cache write: ${u.cacheCreation.toLocaleString()} | Uncached: ${u.inputTokens.toLocaleString()}`,
+      `  Output: ${u.outputTokens.toLocaleString()} tokens`,
+    ];
+    for (const line of lines) {
+      this.renderer.renderActionError(line); // reuse as generic log line
+    }
   }
 
   private logError(context: string, error: unknown, extra?: Record<string, unknown>): void {
