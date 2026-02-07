@@ -1,6 +1,10 @@
+import React from 'react';
+import { render } from 'ink';
 import { parseArgs } from './config';
 import { GameLoop } from './game-loop';
 import { AnthropicAdapter } from './llm/anthropic-adapter';
+import { InkRenderer } from './display/ink-renderer';
+import { App } from './display/ink-app';
 
 async function main() {
   const config = parseArgs(process.argv);
@@ -11,22 +15,30 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`Starting Monopoly Eval with ${config.players} players using ${config.model}`);
-  if (config.seed !== undefined) {
-    console.log(`Using random seed: ${config.seed}`);
-  }
+  const inkRenderer = new InkRenderer();
 
-  const gameLoop = new GameLoop(config, () => {
-    return new AnthropicAdapter({
+  // Mount the Ink app
+  const { unmount, waitUntilExit } = render(
+    React.createElement(App, { renderer: inkRenderer }),
+  );
+
+  const gameLoop = new GameLoop(
+    config,
+    () => new AnthropicAdapter({
       model: config.model,
       apiKey: process.env.ANTHROPIC_API_KEY,
-    });
-  });
+    }),
+    inkRenderer,
+  );
 
   try {
-    const finalState = await gameLoop.run();
+    await gameLoop.run();
+    // Keep the UI visible for a moment after game over
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    unmount();
     process.exit(0);
   } catch (error) {
+    unmount();
     console.error('Fatal error:', error);
     process.exit(1);
   }

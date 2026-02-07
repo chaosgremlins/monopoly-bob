@@ -8,8 +8,11 @@ import { LLMAdapter, ChatMessage, ContentBlock, ToolDefinition } from './llm/typ
 import { translateActionsToTools } from './llm/tool-translator';
 import { buildSystemPrompt, buildTurnMessage, buildAuctionMessage } from './llm/prompt-builder';
 import { Renderer } from './display/renderer';
+import { InkRenderer } from './display/ink-renderer';
 import { GameLogger } from './logger';
 import { GameConfig } from './config';
+
+type AnyRenderer = Renderer | InkRenderer;
 
 const PLAYER_NAMES = ['Alice', 'Bob', 'Charlie', 'Diana'];
 const MAX_ACTIONS_PER_TURN = 20;
@@ -25,16 +28,16 @@ export class GameLoop {
   private state!: GameState;
   private engine: GameEngine;
   private players: Map<string, PlayerContext> = new Map();
-  private renderer: Renderer;
+  private renderer: AnyRenderer;
   private logger: GameLogger;
   private config: GameConfig;
   private rng: () => number;
 
-  constructor(config: GameConfig, adapterFactory: (playerName: string) => LLMAdapter) {
+  constructor(config: GameConfig, adapterFactory: (playerName: string) => LLMAdapter, renderer?: AnyRenderer) {
     this.config = config;
     this.rng = createRng(config.seed);
     this.engine = new GameEngine(this.rng);
-    this.renderer = new Renderer(config.verbose);
+    this.renderer = renderer ?? new Renderer(config.verbose);
     this.logger = new GameLogger(config.logFile);
 
     // Create player configs
@@ -141,7 +144,7 @@ export class GameLoop {
       const action = await this.getLLMAction(ctx, player.id, availableActions);
       if (!action) {
         // LLM failed to produce a valid action after retries — force end turn
-        console.log(`  [WARNING] ${player.name} failed to choose an action. Forcing end_turn.`);
+        this.renderer.renderActionError(`[WARNING] ${player.name} failed to choose an action. Forcing end_turn.`);
         const result = this.engine.applyAction(this.state, { action: 'end_turn' });
         this.state = result.newState;
         actionCount++;
@@ -173,7 +176,7 @@ export class GameLoop {
     }
 
     if (actionCount >= MAX_ACTIONS_PER_TURN) {
-      console.log(`  [WARNING] Turn action limit reached for ${currentPlayer.name}. Forcing end_turn.`);
+      this.renderer.renderActionError(`[WARNING] Turn action limit reached for ${currentPlayer.name}. Forcing end_turn.`);
     }
 
     // Advance to next player
@@ -231,7 +234,7 @@ export class GameLoop {
       } catch (error) {
         this.renderer.renderLLMDone();
         const msg = error instanceof Error ? error.message : 'Unknown error';
-        console.log(`  [ERROR] LLM call failed: ${msg}`);
+        this.renderer.renderActionError(`[ERROR] LLM call failed: ${msg}`);
         if (attempt < MAX_RETRIES - 1) {
           await sleep(1000); // Back off before retry
         }
