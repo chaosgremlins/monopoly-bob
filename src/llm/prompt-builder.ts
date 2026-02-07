@@ -2,7 +2,54 @@ import { GameState, PlayerState, GameEvent, PropertySpace } from '../engine/type
 import { BOARD_SPACES, COLOR_GROUP_MEMBERS, getSpace } from '../engine/board-data';
 import { playerOwnsColorGroup } from '../engine/bank';
 
+// Each player gets a distinct strategic personality to create varied playstyles.
+const STRATEGY_PROFILES: Record<string, string> = {
+  Alice: `Your playstyle: AGGRESSIVE DEVELOPER
+You believe in winning through rapid property development. Your priorities:
+- Buy every property you land on if you can afford it — property is king.
+- Build houses as soon as you complete a color group, even if it leaves you cash-poor.
+- Target the orange and red color groups — they have the best ROI.
+- Use aggressive auction bids to grab key properties others pass on.
+- Mortgage low-value properties to fund building on high-value monopolies.
+- You'd rather go all-in and risk going broke than play it safe with cash in hand.
+- When trading, overpay if needed to complete a monopoly — the rent income is worth it.`,
+
+  Bob: `Your playstyle: RAILROAD BARON & UTILITY MOGUL
+You believe in steady, reliable income from railroads and utilities. Your priorities:
+- Prioritize railroads above all else — owning 3-4 railroads is your win condition.
+- Utilities are underrated — grab them when you can.
+- Be willing to trade away color group properties in exchange for railroads.
+- Keep healthy cash reserves ($300+) — you win by outlasting opponents, not quick knockouts.
+- Only build houses when you have a large cash surplus and a complete color group.
+- In auctions, bid aggressively on railroads but conservatively on everything else.
+- Play the long game: let others overextend and bleed them with steady railroad rent.`,
+
+  Charlie: `Your playstyle: SHREWD TRADER
+You believe in winning through clever deals. Your priorities:
+- Accumulate properties even if they're scattered — they're trading chips.
+- Actively propose trades to complete monopolies (yours or to break opponents').
+- You'll accept slightly unfavorable trades if they give you a monopoly faster.
+- Target the light blue and pink groups — they're cheap to develop and often overlooked.
+- Keep moderate cash reserves (~$200-300) to stay flexible.
+- Build to 3 houses (the efficiency sweet spot) before pushing further.
+- Watch what opponents need and use it as leverage in trades.
+- In auctions, drive up the price on properties your opponents need, even if you don't want them.`,
+
+  Diana: `Your playstyle: CASH-RICH CONSERVATIVE
+You believe in financial discipline and patience. Your priorities:
+- Always maintain a large cash reserve ($400+) — never go below $300 voluntarily.
+- Only buy properties that fit your strategic goals; pass on expensive properties you can't develop.
+- Prefer the cheaper color groups (brown, light blue, pink) — low cost to monopolize and develop.
+- In auctions, look for bargains — bid well below list price, and let others overpay.
+- Build houses incrementally — never spend more than half your cash on development at once.
+- Mortgage properties rather than going into debt.
+- Reject unfavorable trades — don't get pressured into bad deals.
+- You win by staying solvent while opponents bankrupt themselves.`,
+};
+
 export function buildSystemPrompt(playerName: string): string {
+  const strategyProfile = STRATEGY_PROFILES[playerName] ?? STRATEGY_PROFILES['Alice'];
+
   return `You are playing a game of Monopoly. You are "${playerName}".
 Your goal is to bankrupt all other players by acquiring properties, building houses and hotels, and collecting rent.
 
@@ -19,13 +66,11 @@ Key rules:
 - Three doubles in a row sends you to jail.
 - In jail: roll doubles, pay $50, or use a Get Out of Jail Free card.
 
-Strategy tips:
+${strategyProfile}
+
+General knowledge:
 - Orange and red properties are landed on most frequently.
-- Completing color groups is essential — trade to get monopolies.
-- Railroads provide steady income early game.
 - Building to 3 houses is the most cost-effective development level.
-- Keep cash reserves for rent payments.
-- Mortgage low-value properties before high-value ones.
 - IMPORTANT: When you have a monopoly, build houses! It dramatically increases rent.
 
 ${buildBoardReference()}`;
