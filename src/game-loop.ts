@@ -235,11 +235,29 @@ export class GameLoop {
         ctx.history.push(response.rawMessage);
 
         if (response.toolCalls.length === 0) {
-          // LLM didn't use a tool — nudge it
-          ctx.history.push({
-            role: 'user',
-            content: 'You must choose an action by making a tool call. Please select one of the available actions.',
-          });
+          // LLM didn't use a tool — send tool_results for any tool_use blocks
+          // in rawMessage (shouldn't happen with tool_choice:'any', but be safe),
+          // then nudge it. Combine into one user message to avoid consecutive
+          // user messages.
+          const blocks = Array.isArray(response.rawMessage.content) ? response.rawMessage.content : [];
+          const toolUseBlocks = blocks.filter((b: ContentBlock) => b.type === 'tool_use') as
+            { type: 'tool_use'; id: string }[];
+
+          const resultBlocks: ContentBlock[] = toolUseBlocks.map(b => ({
+            type: 'tool_result' as const,
+            tool_use_id: b.id,
+            content: 'You must use a tool call.',
+          }));
+
+          if (resultBlocks.length > 0) {
+            resultBlocks.push({ type: 'text', text: 'You must choose an action by making a tool call. Please select one of the available actions.' } as any);
+            ctx.history.push({ role: 'user', content: resultBlocks });
+          } else {
+            ctx.history.push({
+              role: 'user',
+              content: 'You must choose an action by making a tool call. Please select one of the available actions.',
+            });
+          }
           continue;
         }
 
@@ -261,6 +279,11 @@ export class GameLoop {
           playerId,
           historyLength: ctx.history.length,
         });
+
+        // Repair history before retrying — the error is likely caused by
+        // orphaned tool_use blocks without matching tool_results
+        ctx.history = sanitizeHistory(ctx.history);
+
         if (attempt < MAX_RETRIES - 1) {
           await sleep(1000); // Back off before retry
         }
@@ -302,18 +325,19 @@ export class GameLoop {
           bids.set(p.id, Math.floor(validBid));
           this.renderer.renderBid(p.name, Math.floor(validBid));
 
-          // Send tool result
-          ctx.history.push({
-            role: 'user',
-            content: [{
-              type: 'tool_result',
-              tool_use_id: response.toolCalls[0].id,
-              content: `Bid of $${Math.floor(validBid)} recorded.`,
-            }],
-          });
+          // Send tool results for ALL tool_use blocks in the response
+          this.sendToolResult(ctx, true, [], undefined);
+          // Overwrite the generic result with the bid-specific one for the first tool
+          const lastResultMsg = ctx.history[ctx.history.length - 1];
+          if (Array.isArray(lastResultMsg.content) && lastResultMsg.content.length > 0) {
+            (lastResultMsg.content[0] as any).content = `Bid of $${Math.floor(validBid)} recorded.`;
+          }
         } else {
           bids.set(p.id, 0);
           this.renderer.renderBid(p.name, 0);
+          // Even with no toolCalls, the rawMessage might have tool_use blocks.
+          // Ensure we send tool_results for any that exist.
+          this.sendToolResult(ctx, true, [], undefined);
         }
       } catch (error) {
         this.renderer.renderLLMDone();
@@ -322,6 +346,8 @@ export class GameLoop {
           auctionProperty: space.name,
           historyLength: ctx.history.length,
         });
+        // Sanitize history to fix any orphaned tool_use blocks from the failed call
+        ctx.history = sanitizeHistory(ctx.history);
         bids.set(p.id, 0);
         this.renderer.renderBid(p.name, 0);
       }
@@ -372,12 +398,18 @@ export class GameLoop {
           return;
         }
       }
+
+      // LLM didn't return a valid trade response — send tool_results for any
+      // tool_use blocks to prevent orphaned blocks, then fall through to reject
+      this.sendToolResult(ctx, false, [], 'Invalid response to trade offer.');
     } catch (error) {
       this.renderer.renderLLMDone();
       this.logError(`handleTradeResponse from ${targetId}`, error, {
         targetId,
         historyLength: ctx.history.length,
       });
+      // Sanitize history to fix any orphaned tool_use blocks from the failed call
+      ctx.history = sanitizeHistory(ctx.history);
     }
 
     // Default: reject trade
@@ -449,28 +481,32 @@ export class GameLoop {
     events: { type: string }[],
     error?: string,
   ): void {
-    // Find the last assistant message with a tool_use
+    // Find the last assistant message with tool_use blocks
     const lastMsg = ctx.history[ctx.history.length - 1];
     if (!lastMsg || lastMsg.role !== 'assistant') return;
 
     const blocks = Array.isArray(lastMsg.content) ? lastMsg.content : [];
-    const toolUseBlock = blocks.find((b: ContentBlock) => b.type === 'tool_use') as
-      | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
-      | undefined;
+    const toolUseBlocks = blocks.filter((b: ContentBlock) => b.type === 'tool_use') as
+      { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }[];
 
-    if (!toolUseBlock) return;
+    if (toolUseBlocks.length === 0) return;
 
     const resultText = success
       ? `Action executed successfully.${events.length > 0 ? ` Events: ${events.map(e => e.type).join(', ')}` : ''}`
       : `Action failed: ${error}`;
 
+    // Send a tool_result for EVERY tool_use block in the assistant message.
+    // The API requires each tool_use to have a matching tool_result.
+    const resultBlocks: ContentBlock[] = toolUseBlocks.map((toolUse, i) => ({
+      type: 'tool_result' as const,
+      tool_use_id: toolUse.id,
+      // First tool_use gets the real result; extras get a generic acknowledgment
+      content: i === 0 ? resultText : 'Acknowledged (only first tool call was processed).',
+    }));
+
     ctx.history.push({
       role: 'user',
-      content: [{
-        type: 'tool_result',
-        tool_use_id: toolUseBlock.id,
-        content: resultText,
-      }],
+      content: resultBlocks,
     });
   }
 
@@ -577,8 +613,6 @@ export class GameLoop {
     if (ctx.history.length <= 60) return;
 
     // Slice to last ~40 messages, then find a safe start point.
-    // A valid conversation must start with a 'user' message and
-    // must not start with a tool_result (which needs a preceding tool_use).
     let sliced = ctx.history.slice(-40);
 
     // Walk forward to find the first plain 'user' message (not a tool_result)
@@ -586,7 +620,6 @@ export class GameLoop {
     for (let i = 0; i < sliced.length; i++) {
       const msg = sliced[i];
       if (msg.role === 'user') {
-        // Check it's not a tool_result message
         const isToolResult = Array.isArray(msg.content) &&
           msg.content.length > 0 &&
           (msg.content[0] as any).type === 'tool_result';
@@ -597,8 +630,81 @@ export class GameLoop {
       }
     }
 
-    ctx.history = sliced.slice(safeStart);
+    sliced = sliced.slice(safeStart);
+
+    // Now sanitize: ensure every assistant message with tool_use blocks
+    // has a following user message with matching tool_results.
+    ctx.history = sanitizeHistory(sliced);
   }
+}
+
+/**
+ * Sanitize a conversation history to ensure no orphaned tool_use or tool_result blocks.
+ *
+ * Rules enforced:
+ * 1. Every assistant message with tool_use blocks must be followed by a user message
+ *    with matching tool_result blocks for ALL tool_use IDs.
+ * 2. No user message should start with tool_result blocks unless preceded by an
+ *    assistant message with corresponding tool_use blocks.
+ *
+ * Fixes applied:
+ * - If an assistant message has tool_use blocks but the next message is missing or
+ *   doesn't have matching tool_results, insert a synthetic tool_result user message.
+ * - If a user message has tool_result blocks with no matching preceding tool_use,
+ *   remove it.
+ */
+export function sanitizeHistory(messages: ChatMessage[]): ChatMessage[] {
+  const result: ChatMessage[] = [];
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    result.push(msg);
+
+    if (msg.role === 'assistant') {
+      // Collect all tool_use IDs from this assistant message
+      const blocks = Array.isArray(msg.content) ? msg.content : [];
+      const toolUseIds = blocks
+        .filter((b: ContentBlock) => b.type === 'tool_use')
+        .map((b: any) => b.id as string);
+
+      if (toolUseIds.length === 0) continue;
+
+      // Check the next message for matching tool_results
+      const next = messages[i + 1];
+      if (next && next.role === 'user' && Array.isArray(next.content)) {
+        const existingResultIds = new Set(
+          next.content
+            .filter((b: ContentBlock) => b.type === 'tool_result')
+            .map((b: any) => b.tool_use_id as string),
+        );
+
+        // Find missing tool_result IDs
+        const missingIds = toolUseIds.filter(id => !existingResultIds.has(id));
+        if (missingIds.length > 0) {
+          // Patch the next message to include the missing tool_results
+          const extraBlocks: ContentBlock[] = missingIds.map(id => ({
+            type: 'tool_result' as const,
+            tool_use_id: id,
+            content: 'Acknowledged.',
+          }));
+          next.content = [...next.content, ...extraBlocks];
+        }
+      } else {
+        // No following user message or it's not a tool_result message — insert one
+        const syntheticBlocks: ContentBlock[] = toolUseIds.map(id => ({
+          type: 'tool_result' as const,
+          tool_use_id: id,
+          content: 'Acknowledged.',
+        }));
+        // Insert synthetic tool_result message right after this assistant message
+        // We'll add it to result and skip nothing (the original next message
+        // will be processed on the next iteration)
+        result.push({ role: 'user', content: syntheticBlocks });
+      }
+    }
+  }
+
+  return result;
 }
 
 function sleep(ms: number): Promise<void> {
