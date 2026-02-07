@@ -25,77 +25,62 @@ function calculateNetWorth(player: { balance: number; properties: Map<number, an
 
 export function PlayerPanel({ state, thinkingPlayer }: PlayerPanelProps) {
   return (
-    <Box flexDirection="column" paddingLeft={2} width={32}>
-      <Text bold color="white">Players</Text>
-      <Text dimColor>{'─'.repeat(28)}</Text>
+    <Box flexDirection="column" marginTop={1}>
+      <Box>
+        <Text bold color="white">Players</Text>
+        <Text dimColor>  Turn {state.turnNumber}  |  Houses: {state.bankHouses}  Hotels: {state.bankHotels}</Text>
+      </Box>
+      <Text dimColor>{'─'.repeat(88)}</Text>
+      <Box>
+        {state.players.map((player, i) => {
+          const isCurrentPlayer = i === state.currentPlayerIndex;
+          const color = PLAYER_COLORS_HEX[i];
+          const token = PLAYER_TOKENS[i];
+          const space = getSpace(player.position);
+          const isThinking = thinkingPlayer === player.name;
+          const netWorth = calculateNetWorth(player);
 
-      {state.players.map((player, i) => {
-        const isCurrentPlayer = i === state.currentPlayerIndex;
-        const color = PLAYER_COLORS_HEX[i];
-        const token = PLAYER_TOKENS[i];
-        const space = getSpace(player.position);
-        const isThinking = thinkingPlayer === player.name;
+          if (player.isBankrupt) {
+            return (
+              <Box key={player.id} width={22} marginRight={2} flexDirection="column">
+                <Text>
+                  <Text dimColor>{token} </Text>
+                  <Text dimColor strikethrough>{player.name}</Text>
+                </Text>
+                <Text dimColor>  BANKRUPT</Text>
+              </Box>
+            );
+          }
 
-        if (player.isBankrupt) {
           return (
-            <Box key={player.id} flexDirection="column" marginTop={1}>
-              <Text>
-                <Text dimColor>{token} </Text>
-                <Text dimColor strikethrough>{player.name}</Text>
-                <Text dimColor> BANKRUPT</Text>
-              </Text>
+            <Box key={player.id} width={22} marginRight={2} flexDirection="column">
+              <Box>
+                <Text color={color} bold>{isCurrentPlayer ? '>' : ' '} {token} {player.name}</Text>
+                {isThinking && <Text color="#888"> ...</Text>}
+              </Box>
+              <Box>
+                <Text>  </Text>
+                <Text color="#00FF00" bold>${player.balance}</Text>
+                <Text dimColor> NW:${netWorth}</Text>
+              </Box>
+              <Box>
+                <Text>  </Text>
+                <Text dimColor>{space.name}</Text>
+              </Box>
+              {player.inJail && (
+                <Box>
+                  <Text>  </Text>
+                  <Text color="red">JAIL ({player.jailTurns + 1}/3)</Text>
+                </Box>
+              )}
+              <Box>
+                <Text>  </Text>
+                <Text dimColor>{player.properties.size} props</Text>
+                {player.getOutOfJailCards > 0 && <Text dimColor> | {player.getOutOfJailCards} GOOJF</Text>}
+              </Box>
             </Box>
           );
-        }
-
-        const netWorth = calculateNetWorth(player);
-
-        return (
-          <Box key={player.id} flexDirection="column" marginTop={1}>
-            <Box>
-              <Text color={color} bold>{isCurrentPlayer ? '> ' : '  '}</Text>
-              <Text color={color} bold>{token} {player.name}</Text>
-              {isThinking && <Text color="#888"> ...</Text>}
-            </Box>
-            <Box>
-              <Text>    </Text>
-              <Text color="#00FF00" bold>${player.balance}</Text>
-              <Text dimColor> (NW: ${netWorth})</Text>
-            </Box>
-            <Box>
-              <Text>    </Text>
-              <Text dimColor>{space.name}</Text>
-            </Box>
-            {player.inJail && (
-              <Box>
-                <Text>    </Text>
-                <Text color="red">IN JAIL ({player.jailTurns + 1}/3)</Text>
-              </Box>
-            )}
-            {player.properties.size > 0 && (
-              <Box>
-                <Text>    </Text>
-                <Text dimColor>{player.properties.size} properties</Text>
-              </Box>
-            )}
-            {player.getOutOfJailCards > 0 && (
-              <Box>
-                <Text>    </Text>
-                <Text dimColor>{player.getOutOfJailCards} GOOJF card(s)</Text>
-              </Box>
-            )}
-          </Box>
-        );
-      })}
-
-      <Box marginTop={1}>
-        <Text dimColor>{'─'.repeat(28)}</Text>
-      </Box>
-      <Box>
-        <Text dimColor>Turn {state.turnNumber}</Text>
-      </Box>
-      <Box>
-        <Text dimColor>Houses: {state.bankHouses} Hotels: {state.bankHotels}</Text>
+        })}
       </Box>
     </Box>
   );

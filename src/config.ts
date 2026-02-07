@@ -6,6 +6,7 @@ export interface GameConfig {
   logFile: string | null;
   seed: number | undefined;
   verbose: boolean;
+  scenarioFile: string | null;
 }
 
 export function parseArgs(argv: string[]): GameConfig {
@@ -17,6 +18,7 @@ export function parseArgs(argv: string[]): GameConfig {
     logFile: null,
     seed: undefined,
     verbose: false,
+    scenarioFile: null,
   };
 
   for (let i = 2; i < argv.length; i++) {
@@ -46,6 +48,9 @@ export function parseArgs(argv: string[]): GameConfig {
       case '--verbose':
         config.verbose = true;
         break;
+      case '--scenario-file':
+        config.scenarioFile = argv[++i];
+        break;
       case '--help':
         printHelp();
         process.exit(0);
@@ -73,6 +78,7 @@ Options:
   --log-file <path>    Write game log to JSON file
   --seed <n>           Random seed for reproducible games
   --verbose            Show detailed LLM interactions
+  --scenario-file <p>  Load initial game state from JSON file
   --help               Show this help message
 
 Environment:

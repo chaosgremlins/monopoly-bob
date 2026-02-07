@@ -1,6 +1,7 @@
-import { GameState, GameAction, TradeOffer } from './engine/types';
+import { appendFileSync, readFileSync } from 'fs';
+import { GameState, GameAction, TradeOffer, ScenarioConfig } from './engine/types';
 import { GameEngine } from './engine/game-engine';
-import { createInitialState } from './engine/game-state';
+import { createInitialState, applyScenario } from './engine/game-state';
 import { getSpace } from './engine/board-data';
 import { getActivePlayers, getPlayerById } from './engine/bank';
 import { createRng } from './engine/dice';
@@ -13,6 +14,8 @@ import { GameLogger } from './logger';
 import { GameConfig } from './config';
 
 type AnyRenderer = Renderer | InkRenderer;
+
+const ERROR_LOG = 'monopoly-errors.log';
 
 const PLAYER_NAMES = ['Alice', 'Bob', 'Charlie', 'Diana'];
 const MAX_ACTIONS_PER_TURN = 20;
@@ -57,6 +60,22 @@ export class GameLoop {
     }
 
     this.state = createInitialState(playerConfigs, this.rng);
+
+    // Apply scenario overrides if provided
+    if (config.scenarioFile) {
+      const scenarioJson = readFileSync(config.scenarioFile, 'utf-8');
+      const scenario: ScenarioConfig = JSON.parse(scenarioJson);
+      this.state = applyScenario(this.state, scenario);
+
+      // Update player names in context map if scenario renamed them
+      for (let i = 0; i < scenario.players.length && i < this.state.players.length; i++) {
+        if (scenario.players[i].name) {
+          const player = this.state.players[i];
+          const ctx = this.players.get(player.id)!;
+          ctx.systemPrompt = buildSystemPrompt(player.name);
+        }
+      }
+    }
   }
 
   async run(): Promise<GameState> {
@@ -235,6 +254,11 @@ export class GameLoop {
         this.renderer.renderLLMDone();
         const msg = error instanceof Error ? error.message : 'Unknown error';
         this.renderer.renderActionError(`[ERROR] LLM call failed: ${msg}`);
+        this.logError(`getLLMAction attempt ${attempt + 1}/${MAX_RETRIES}`, error, {
+          playerId,
+          historyLength: ctx.history.length,
+          tools: tools.map(t => t.name),
+        });
         if (attempt < MAX_RETRIES - 1) {
           await sleep(1000); // Back off before retry
         }
@@ -310,6 +334,11 @@ export class GameLoop {
         }
       } catch (error) {
         this.renderer.renderLLMDone();
+        this.logError(`handleAuction bid from ${p.name}`, error, {
+          playerId: p.id,
+          auctionProperty: space.name,
+          historyLength: ctx.history.length,
+        });
         bids.set(p.id, 0);
         this.renderer.renderBid(p.name, 0);
       }
@@ -362,6 +391,10 @@ export class GameLoop {
       }
     } catch (error) {
       this.renderer.renderLLMDone();
+      this.logError(`handleTradeResponse from ${targetId}`, error, {
+        targetId,
+        historyLength: ctx.history.length,
+      });
     }
 
     // Default: reject trade
@@ -476,10 +509,73 @@ export class GameLoop {
     this.state.lastDiceRoll = null;
   }
 
-  private trimHistory(ctx: PlayerContext): void {
-    if (ctx.history.length > 60) {
-      ctx.history = ctx.history.slice(-40);
+  private logError(context: string, error: unknown, extra?: Record<string, unknown>): void {
+    const timestamp = new Date().toISOString();
+    const lines: string[] = [
+      `\n${'='.repeat(80)}`,
+      `[${timestamp}] ${context}`,
+      `Turn: ${this.state.turnNumber} | Player: ${this.state.players[this.state.currentPlayerIndex]?.name ?? '?'}`,
+    ];
+
+    if (error instanceof Error) {
+      lines.push(`Error: ${error.message}`);
+      // Anthropic SDK errors have status and body
+      const apiErr = error as any;
+      if (apiErr.status) lines.push(`Status: ${apiErr.status}`);
+      if (apiErr.error) lines.push(`Body: ${JSON.stringify(apiErr.error, null, 2)}`);
+      if (apiErr.headers) {
+        const reqId = apiErr.headers?.['request-id'] ?? apiErr.headers?.get?.('request-id');
+        if (reqId) lines.push(`Request-ID: ${reqId}`);
+      }
+      if (error.stack) lines.push(`Stack: ${error.stack}`);
+    } else {
+      lines.push(`Error: ${String(error)}`);
     }
+
+    if (extra) {
+      for (const [key, value] of Object.entries(extra)) {
+        try {
+          lines.push(`${key}: ${JSON.stringify(value, null, 2)}`);
+        } catch {
+          lines.push(`${key}: [unserializable]`);
+        }
+      }
+    }
+
+    lines.push('='.repeat(80));
+
+    try {
+      appendFileSync(ERROR_LOG, lines.join('\n') + '\n');
+    } catch {
+      // Can't write error log — ignore
+    }
+  }
+
+  private trimHistory(ctx: PlayerContext): void {
+    if (ctx.history.length <= 60) return;
+
+    // Slice to last ~40 messages, then find a safe start point.
+    // A valid conversation must start with a 'user' message and
+    // must not start with a tool_result (which needs a preceding tool_use).
+    let sliced = ctx.history.slice(-40);
+
+    // Walk forward to find the first plain 'user' message (not a tool_result)
+    let safeStart = 0;
+    for (let i = 0; i < sliced.length; i++) {
+      const msg = sliced[i];
+      if (msg.role === 'user') {
+        // Check it's not a tool_result message
+        const isToolResult = Array.isArray(msg.content) &&
+          msg.content.length > 0 &&
+          (msg.content[0] as any).type === 'tool_result';
+        if (!isToolResult) {
+          safeStart = i;
+          break;
+        }
+      }
+    }
+
+    ctx.history = sliced.slice(safeStart);
   }
 }
 

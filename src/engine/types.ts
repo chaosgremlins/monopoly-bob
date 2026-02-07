@@ -66,6 +66,25 @@ export type Space = PropertySpace | RailroadSpace | UtilitySpace | TaxSpace | Si
 
 export type OwnableSpace = PropertySpace | RailroadSpace | UtilitySpace;
 
+// ── Scenario Seeding ──
+
+export interface ScenarioPlayerConfig {
+  name?: string;
+  balance?: number;
+  position?: number;
+  properties?: {
+    position: number;
+    houses?: number;
+    mortgaged?: boolean;
+  }[];
+  getOutOfJailCards?: number;
+  inJail?: boolean;
+}
+
+export interface ScenarioConfig {
+  players: ScenarioPlayerConfig[];
+}
+
 // ── Card Effects ──
 
 export type CardEffect =

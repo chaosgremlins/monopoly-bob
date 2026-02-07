@@ -27,28 +27,18 @@ export function App({ renderer }: AppProps) {
     );
   }
 
-  if (displayState.gameOver) {
-    return (
-      <Box flexDirection="column">
-        <Box>
-          <Board state={displayState.gameState} />
-          <PlayerPanel state={displayState.gameState} thinkingPlayer={null} />
-        </Box>
-        <EventLog events={displayState.eventLog} />
-      </Box>
-    );
-  }
-
   return (
     <Box flexDirection="column">
+      {/* Top: Board on left, Event Log on right */}
       <Box>
         <Board state={displayState.gameState} />
-        <PlayerPanel
-          state={displayState.gameState}
-          thinkingPlayer={displayState.thinkingPlayer}
-        />
+        <EventLog events={displayState.eventLog} />
       </Box>
-      <EventLog events={displayState.eventLog} />
+      {/* Bottom: Players in a horizontal row */}
+      <PlayerPanel
+        state={displayState.gameState}
+        thinkingPlayer={displayState.thinkingPlayer}
+      />
     </Box>
   );
 }

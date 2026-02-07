@@ -1,5 +1,6 @@
-import { GameState, PlayerState, GameEvent } from '../engine/types';
+import { GameState, PlayerState, GameEvent, PropertySpace } from '../engine/types';
 import { BOARD_SPACES, COLOR_GROUP_MEMBERS, getSpace } from '../engine/board-data';
+import { playerOwnsColorGroup } from '../engine/bank';
 
 export function buildSystemPrompt(playerName: string): string {
   return `You are playing a game of Monopoly. You are "${playerName}".
@@ -89,6 +90,17 @@ export function buildTurnMessage(state: GameState, actingPlayerId: string): stri
     lines.push(`  Requesting: ${formatTradeItems(trade.requestedProperties, trade.requestedMoney)}`);
   }
 
+  // Highlight buildable monopolies
+  const buildHints = getBuildHints(state, player);
+  if (buildHints.length > 0) {
+    lines.push('');
+    lines.push('*** BUILDING OPPORTUNITY ***');
+    for (const hint of buildHints) {
+      lines.push(`  ${hint}`);
+    }
+    lines.push('  TIP: Building houses dramatically increases rent. Consider building before ending your turn!');
+  }
+
   // Board overview — list all owned properties
   lines.push('');
   lines.push('PROPERTY OWNERSHIP:');
@@ -126,6 +138,46 @@ export function buildAuctionMessage(
     '',
     'Submit your bid. Bid 0 to pass. Highest bidder wins.',
   ].join('\n');
+}
+
+function getBuildHints(state: GameState, player: PlayerState): string[] {
+  const hints: string[] = [];
+
+  for (const [colorGroup, positions] of Object.entries(COLOR_GROUP_MEMBERS)) {
+    if (!playerOwnsColorGroup(state, player.id, positions)) continue;
+
+    const anyMortgaged = positions.some(p => player.properties.get(p)?.mortgaged);
+    if (anyMortgaged) continue;
+
+    const propsInfo = positions.map(pos => {
+      const space = getSpace(pos) as PropertySpace;
+      const ps = player.properties.get(pos)!;
+      return { space, ps, pos };
+    });
+
+    const minHouses = Math.min(...propsInfo.map(p => p.ps.houses));
+    const maxHouses = Math.max(...propsInfo.map(p => p.ps.houses));
+    const houseCost = propsInfo[0].space.houseCost;
+
+    if (maxHouses >= 5) {
+      // Fully developed
+      continue;
+    }
+
+    if (player.balance < houseCost) {
+      hints.push(`You have the ${colorGroup} monopoly but can't afford to build ($${houseCost}/house, you have $${player.balance}).`);
+      continue;
+    }
+
+    const buildable = propsInfo.filter(p => p.ps.houses <= minHouses && p.ps.houses < 4);
+    const names = buildable.map(p => `${p.space.name} (pos ${p.pos})`).join(', ');
+    const currentRent = propsInfo[0].space.rent[minHouses] * (minHouses === 0 ? 2 : 1);
+    const nextRent = propsInfo[0].space.rent[minHouses + 1];
+
+    hints.push(`${colorGroup} monopoly: can build on ${names} for $${houseCost}/house. Rent jumps from $${currentRent} to $${nextRent}.`);
+  }
+
+  return hints;
 }
 
 function formatPhase(phase: string): string {

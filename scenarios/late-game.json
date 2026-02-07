@@ -1,0 +1,34 @@
+{
+  "players": [
+    {
+      "name": "Alice",
+      "balance": 800,
+      "position": 0,
+      "properties": [
+        { "position": 6, "houses": 0 },
+        { "position": 8, "houses": 0 },
+        { "position": 9, "houses": 0 },
+        { "position": 11, "houses": 0 },
+        { "position": 13, "houses": 0 },
+        { "position": 14, "houses": 0 },
+        { "position": 5, "houses": 0 },
+        { "position": 15, "houses": 0 }
+      ]
+    },
+    {
+      "name": "Bob",
+      "balance": 900,
+      "position": 20,
+      "properties": [
+        { "position": 16, "houses": 0 },
+        { "position": 18, "houses": 0 },
+        { "position": 19, "houses": 0 },
+        { "position": 21, "houses": 0 },
+        { "position": 23, "houses": 0 },
+        { "position": 24, "houses": 0 },
+        { "position": 25, "houses": 0 },
+        { "position": 28, "houses": 0 }
+      ]
+    }
+  ]
+}
